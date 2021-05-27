@@ -1,0 +1,171 @@
+---
+title: "SQL_R_TWO_ways"
+author: "S.H.Hosseini"
+date: "26/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sqldf)
+library(odbc)
+library(DBI)
+library(RSQLite)
+
+```
+
+
+# 1- SQLDF
+
+- "sqldf" is a package allowing us to write SQL inquries inside R. 
+
+- here I use NHANES datset and NHANES stands for National Health and Nutritional Examination Survue. The data can be donwnloaded using a package with similar name
+
+using "sqldf" is very easy below you could see some of the example.
+
+```{r}
+library(NHANES)
+
+## NHANES dataset
+nh <- NHANES::NHANES
+
+# before going through the details I am going to split my NHANES datasets to two datasets so I can join them later 
+nh1 <- nh %>%
+  select(ID, Gender, Age, Education)
+
+nh2 <- nh %>%
+  select(ID,Poverty)
+
+## select all the columns of nh where age is abov 50 
+sqldf(x = 
+        "SELECT * FROM nh
+        WHERE Age > 50
+      ")
+
+# select the required columns and change their name. 
+
+sqldf(x = 
+        "SELECT Gender as Sex, Age, Poverty as 'Income Ratio' FROM nh
+      ")
+```
+
+
+## DBPLYR
+
+- dplyr is a pacakge that is written on top of SQL. However, dplyr has an important advantange that is we can use the piping (%>%) while we are writing our queries. Therefore, we will be able to produce rather complicated quriest and if needed we can transform it to SQL queries. 
+
+- Transforming between dplyr and SQL one needs to use a package called dbplyr. dbplyr is in fact is used for writing dplyr-type queires within inside databases.  
+
+- First we are required to create a connection with a database and transfer the dataset to the connection. 
+
+```{r}
+# create a SQLite connection insde the memeory
+con <- dbConnect(SQLite(), ":memory:")
+
+# copy the nh datasets inside the connection
+
+copy_to(con,nh)
+copy_to(con,nh1)
+copy_to(con,nh2)
+
+ 
+```
+
+we can also use dbGetquery() to write SQL queries 
+
+```{r}
+dbGetQuery(con,
+           'SELECT AVG(Age) as `Mean Age`, Gender
+           FROM nh
+           GROUP BY Gender'
+           )
+```
+
+so how does the dbplyr work? 
+
+
+
+```{r}
+nh
+# work with nh dataset
+# tell R what dataset we are working on 
+nh_db <- tbl(con, "nh")
+
+
+
+nh_query <- nh_db %>%
+  select(Gender,Age,Education, Poverty , BMI) %>%
+  filter(Age>19, 
+         Gender == "Male"
+         ) %>%
+  group_by(Education) %>%
+  summarise(mean_age = mean(Age,na.rm=T),
+            median_body_mass  = median(BMI,na.rm=T)
+            )
+# then we can use show_query() function to transform dplyr query to SQL querty
+nh_query %>%
+  show_query()
+
+
+## here is the SQL query
+# SELECT `Education`, AVG(`Age`) AS `mean_age`, MEDIAN(`BMI`) AS `median_body_mass`
+# FROM (SELECT `Gender`, `Age`, `Education`, `Poverty`, `BMI`
+# FROM `nh`)
+# WHERE ((`Age` > 19.0) AND (`Gender` = 'Male'))
+# GROUP BY `Education`
+```
+
+
+
+## Joining 
+
+```{r}
+
+
+nh1_db <- tbl(con, "nh1")
+nh2_db <- tbl(con, "nh2")
+
+join_query <- nh1_db %>%
+  select(ID, Gender, Age) %>%
+  filter(Age>30) %>%
+  mutate(age_sqr=sqr(Age)) %>%
+  mutate(age_mutate = case_when(
+    age > 40 ~ sqrt(Age), T ~ Age
+  )) %>%
+  left_join(nh2_db, by="ID") %>%
+  group_by(Gender) %>%
+  summarise(across(c(Age, Poverty),mean,na.rm=T,.names = "{.col}_mean"))
+  
+
+join_query %>%
+  show_query()
+
+
+# here is the results
+# SELECT `Gender`, AVG(`Age`) AS `Age_mean`, AVG(`Poverty`) AS `Poverty_mean`
+# FROM (SELECT `LHS`.`ID` AS `ID`, `Gender`, `Age`, `age_sqr`, `age_mutate`, `Poverty`
+# FROM (SELECT `ID`, `Gender`, `Age`, `age_sqr`, CASE
+# WHEN (`age` > 40.0) THEN (SQRT(`Age`))
+# WHEN (1) THEN (`Age`)
+# END AS `age_mutate`
+# FROM (SELECT `ID`, `Gender`, `Age`, sqr(`Age`) AS `age_sqr`
+# FROM (SELECT `ID`, `Gender`, `Age`
+# FROM `nh1`)
+# WHERE (`Age` > 30.0))) AS `LHS`
+# LEFT JOIN `nh2` AS `RHS`
+# ON (`LHS`.`ID` = `RHS`.`ID`)
+# )
+# GROUP BY `Gender`
+```
+
+
+
+
+
+
+
+
