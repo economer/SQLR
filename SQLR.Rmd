@@ -1,6 +1,6 @@
 ---
 title: "SQL_R_TWO_ways"
-author: "S.H.Hosseini"
+author: "S.H.Pozveh"
 date: "26/05/2021"
 output: html_document
 ---
